@@ -1,4 +1,4 @@
-# smta
+# SMTA(Simple Mail Transport Agent)
 
 This is a fork of Walter C. Pelissero's smta
 
