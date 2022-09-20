@@ -7,7 +7,7 @@ http://wcp.sdf-eu.org/software/
 
 ### quickstart
 
-- use roswell
+- use [roswell](https://github.com/roswell/roswell)
 ```
 % ros install moremagic/smta
 
