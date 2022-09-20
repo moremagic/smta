@@ -32,28 +32,17 @@
 
 #+cmu (ext:file-comment "$Id$")
 
-(in-package :cl-user)
-
-(defpackage :smta
-  (:use :common-lisp #+sbcl :sb-bsd-sockets)
-  (:export #:run-program
-	   #:start-smtp-server
-	   #:start-spooler
-	   #:test
-	   #:smtp-repl
-	   #:print-spool-status))
-
-(in-package :smta)
+(in-package #:smta)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Configuration parameters
 
 (defvar *smta-load-path* (make-pathname :defaults *load-pathname* :name nil :type nil))
 
-(defvar *configuration-file* #P"/etc/mail/smta.conf"
+(defvar *configuration-file*  (merge-pathnames "smta.conf"  (uiop/os:getcwd))
   "Pathname of the configuration file.")
 
-(defvar *alias-file* #P"/etc/mail/aliases"
+(defvar *alias-file* (merge-pathnames "aliases" (uiop/os:getcwd))
   "Aliases file pathname.  Aliases are read from this.")
 
 (defvar *recipient-types* '()
@@ -207,7 +196,23 @@ play as client.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defconstant +whitespace-chars+ '(#\space #\return #\newline #\tab))
+;;;;; https://www.sbcl.org/manual/#Idiosyncrasies ;;;;;
+(defmacro define-constant (name value &optional doc)
+  `(defconstant ,name (if (boundp ',name) (symbol-value ',name) ,value)
+                      ,@(when doc (list doc))))
+
+
+;; デバッガフックを設定
+;; (setf sb-ext:*invoke-debugger-hook*  
+;;       (lambda (condition hook) 
+;;         (declare (ignore conditoin hook))
+;;         ;; デバッガが呼ばれたら、単にプログラムを終了する
+;;         (format t "[smta:hook debugger calling...]~%")
+;;         (sb-ext:quit)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-constant +whitespace-chars+ '(#\space #\return #\newline #\tab))
 
 (defvar *child-processes* '()
   "List of running child processes we have to keep count of.")
@@ -320,7 +325,7 @@ See /etc/services."
 		    (when (string-equal proto protocol)
 		      (return (string->integer port-num)))))))))))
 
-(defun port-number (port-desc)
+(defun port-number-back (port-desc)
   "Return the port number, either looking it up in the
 /etc/services or simply returning the default value.  PORT-DESC
 can be a number (just return that), a string (look it up) or a
@@ -329,11 +334,21 @@ pair (name and default number)."
     (string (find-service port-desc))
     (integer port-desc)
     (list (or (find-service (car port-desc))
-	      (cdr port-desc)))))
+	      (cadr port-desc)))))
+
+(defun port-number (port-desc)
+  "Return the port number, either looking it up in the
+/etc/services or simply returning the default value.  PORT-DESC
+can be a number (just return that), a string (look it up) or a
+pair (name and default number)."
+    (car
+      (cdr port-desc)))
 
 (defun make-server-socket (port)
   (let ((socket (make-instance 'inet-socket :type :stream :protocol :tcp)))
-    (socket-bind socket (vector 0 0 0 0) (port-number port))
+    (format t "[make-server-socket] ~a ~%" port)
+    ;;(socket-bind socket (vector 0 0 0 0) (port-number port))
+    (socket-bind socket #(0 0 0 0) port)
     (socket-listen socket 5)
     socket))
 
@@ -1202,6 +1217,10 @@ to FORMAT.  Multi-line replies are formatted according to RFC821."
 	    (crlf stream)))))
 
 (defun greeting-message (stream)
+  (smtp-reply stream 220 "~A SMTP smta ~A; ~A ~%"
+	      (host-name) (version) (time-string)))
+
+(defun greeting-message-bak (stream)
   (smtp-reply stream 220 "~A SMTP smta ~A; ~A~@
 Hi there.  This is an experimental SMTP server written in Common Lisp.~@
 If something goes wrong with this session you are pretty much~@
@@ -1443,7 +1462,7 @@ address."
   t)
 
 (defun smtp-repl (stream client-ip-address)
-  (greeting-message stream)
+  ;;(greeting-message stream)
   (let (extended-smtp
 	client-identity
 	sender
@@ -1506,6 +1525,8 @@ address."
 		    ((null recipients)
 		     (smtp-reply stream 503 "Need RCPT (recipient)"))
 		    (:else
+                     (progn
+       (format t "aaaaa~%")
 		     (with-new-message (msg :client-identity client-identity
 					    :client-ip-address client-ip-address
 					    :sender sender
@@ -1527,7 +1548,7 @@ address."
 			   (dprint :accept "accepted message ~A" (message-id msg))
 			   (run-hooks *accept-after-hook* msg)
 			   (attempt-immediate-delivery msg)))
-		       (reset-state)))))
+		       (reset-state))))))
 	     (:rset
 	      (reset-state)
 	      (smtp-reply stream 250 "Reset state"))
@@ -1591,15 +1612,6 @@ address."
 (defun sigchld-handler (&rest args)
   (declare (ignore args))
   (bury-dead-child))
-
-(defun enable-interrupts ()
-  (sb-sys:enable-interrupt sb-unix:sigchld #'sigchld-handler))
-
-(defun ignore-interrupts ()
-  (sb-sys:ignore-interrupt sb-unix:sigchld))
-
-(defun default-interrupts ()
-  (sb-sys:default-interrupt sb-unix:sigchld))
 
 (defun parse-alias-definition (string)
   (let ((colon-position (position #\: string)))
@@ -1695,15 +1707,12 @@ it's mainly used to set the configuration variables."
 
 (defun start-smtp-server ()
   "Run the SMTP server.  Id doesn't return."
-  (enable-interrupts)
-  (unwind-protect
-       (do-connections (socket (port-number *smtp-incoming-port*))
-	 (dprint :connect "Received connection from ~A" (socket-peername socket))
-	 (push (within-subprocess
-		 (serve-connection socket)) *child-processes*)
-	 (when (>= (length *child-processes*) *max-processes*)
-	   (sb-posix:wait)))
-    (default-interrupts)))
+  (do-connections (socket (cdr *smtp-incoming-port*))
+    (dprint :connect "Received connection from ~A" (socket-peername socket))
+      (push (within-subprocess
+        (serve-connection socket)) *child-processes*)
+        (when (>= (length *child-processes*) *max-processes*)
+          (sb-posix:wait))))
 
 (defun run-program ()
   "Main program entry point.  It start all the server modules."
