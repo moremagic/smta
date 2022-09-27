@@ -1,4 +1,5 @@
-(asdf:load-system :usocket)
+;;(asdf:load-system :usocket)
+(require :usocket)
 
 (in-package :cl-user)
 
@@ -10,7 +11,7 @@
            :test
            :smtp-repl
            :print-spool-status
-           :start-simple-server))
+           :start-echo-server))
 
 (in-package :smta)
 
