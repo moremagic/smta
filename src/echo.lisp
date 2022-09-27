@@ -1,7 +1,3 @@
-(defun hello ()
-  (print "Hello echo server."))
-
-
 (defun start-echo-server (port)
   "Listening on a port for a message, and print the received message."
   (usocket:with-socket-listener (socket "127.0.0.1" port)
