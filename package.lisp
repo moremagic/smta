@@ -11,6 +11,7 @@
            :test
            :smtp-repl
            :print-spool-status
+           :hello
            :start-echo-server))
 
 (in-package :smta)

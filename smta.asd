@@ -6,4 +6,5 @@
   :components ((:file "package")
                (:module "src"
                 :components
-                ((:file "smta")))))
+                ((:file "smta")
+                 (:file "echo")))))
